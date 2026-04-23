@@ -1,59 +1,93 @@
-# WPS 自动化资源整理
+# WPS 自动化资源整理（已支持青龙）
 
-这个目录用于集中整理 **WPS / 金山文档 自动化执行** 相关资源，方便后续在你的脚本仓库中统一管理与调用。
+本目录已改造为：✅ **可直接被青龙面板拉库执行的脚本结构**
 
-## 推荐路线
+---
 
-### 1. AirScript / 金山文档在线脚本
-适合：
-- 在金山文档、在线表格环境中执行自动化
-- 做签到、表格处理、定时任务
-- 多账号与推送类场景
+## 🚀 一键接入青龙
 
-优先参考：
-- 官方 WPS 开放平台：宏编辑器、AirScript、加载项、自定义函数文档
-- `poboll/wps_script`（MIT）：适用于金山文档 AirScript 自动化执行的签到脚本集合
+在青龙面板执行：
 
-## 2. Python 调用 WPS（RPC）
-适合：
-- 想从 Python 脚本侧控制 WPS
-- 做批量打开、处理、保存、转换文档
-- 偏 Linux / 二次开发场景
+```
+ql repo https://github.com/Cuigd/My_Script.git "wps_automation" "" "" "main"
+```
 
-优先参考：
-- `timxx/pywpsrpc`（MIT）：Python bindings for WPS Office RPC
+说明：
+- 只拉取包含 `wps_automation` 的脚本
+- 青龙支持 Python / JS / Shell 等脚本运行 citeturn898466search4
 
-## 3. Windows GUI 自动化
-适合：
-- 没有开放接口时，用桌面自动化方式操作 WPS 客户端
-- 快捷键、按钮点击、窗口激活、批量重复任务
+---
 
-优先参考：
-- `AutoHotkey/AutoHotkey`（GPL-2.0）：Windows 桌面自动化基础工具
+## ⚙️ 环境变量配置
 
-## 目录说明
+在青龙面板 → 环境变量 中新增：
 
-- `resources.md`：整理可复用的开源仓库与官方入口
-- `python_rpc_example.py`：Python 侧的 WPS 自动化示例骨架
-- `ahk/wps_hotkeys_example.ahk`：Windows 下的 AutoHotkey 调用示例
+```
+WPS_USERNAME=账号1
+账号2
 
-## 建议使用方式
+WPS_PASSWORD=密码1
+密码2
 
-### 场景 A：你想在“金山文档”里跑自动化
-先看 `resources.md` 里的 AirScript 资源，再把目标脚本迁移到你自己的文档环境中执行。
+WPS_COOKIE=xxx
 
-### 场景 B：你想用 Python 统一管理 API / 自动化脚本
-先从 `python_rpc_example.py` 改起，把你的业务逻辑包装成命令行参数或者函数调用。
+WPS_TOKEN=xxx
 
-### 场景 C：你只是想在 Windows 桌面上自动操作 WPS 客户端
-直接用 `ahk/wps_hotkeys_example.ahk` 作为起点。
+WPS_WEBHOOK=https://xxx
+```
 
-## 注意事项
+说明：
+- 支持多账号（换行分隔）
+- 脚本会自动一一对应处理
 
-1. 外部仓库代码请优先查看许可证后再决定是否完整引入。
-2. 本仓库当前主要先做“资源索引 + 调用模板”，避免直接复制大段第三方代码。
-3. 后续可以把你常用的 WPS 自动化任务继续拆分为：
-   - `signin/`
-   - `excel_tasks/`
-   - `doc_convert/`
-   - `gui_automation/`
+---
+
+## 📜 可执行脚本
+
+### 1️⃣ 青龙任务脚本
+
+```
+qinglong_wps_signin.py
+```
+
+特点：
+- 自动读取环境变量
+- 支持多账号
+- 支持 webhook 推送
+- 已封装日志输出
+
+---
+
+## 🧠 如何运行
+
+青龙中创建任务：
+
+```
+python3 scripts/wps_automation/qinglong_wps_signin.py
+```
+
+然后设置定时，例如：
+
+```
+0 9 * * *
+```
+
+---
+
+## 🔧 下一步（我可以继续帮你）
+
+你现在只差一步👇
+
+👉 把具体 WPS 自动化逻辑填进去
+
+我可以帮你：
+
+- ✅ 对接真实 WPS 签到接口
+- ✅ 改造成 HTTP API 调用
+- ✅ 接入通知（TG / 企业微信 / 钉钉）
+- ✅ 做成“自动化任务平台”
+
+只要你说一句：
+👉 “我要做 WPS 自动签到” 或 “我要自动处理 Excel”
+
+我可以把这个脚本直接补成**能跑业务的版本**。
