@@ -1,93 +1,108 @@
-# WPS 自动化资源整理（已支持青龙）
+# WPS 自动化（青龙版）
 
-本目录已改造为：✅ **可直接被青龙面板拉库执行的脚本结构**
-
----
-
-## 🚀 一键接入青龙
-
-在青龙面板执行：
-
-```
-ql repo https://github.com/Cuigd/My_Script.git "wps_automation" "" "" "main"
-```
-
-说明：
-- 只拉取包含 `wps_automation` 的脚本
-- 青龙支持 Python / JS / Shell 等脚本运行 citeturn898466search4
+本目录已支持：✅ **WPS 自动签到（青龙运行）**
 
 ---
 
-## ⚙️ 环境变量配置
+## 🔑 核心原理
 
-在青龙面板 → 环境变量 中新增：
+WPS 官方没有稳定公开签到 API，常见做法是：
 
-```
-WPS_USERNAME=账号1
-账号2
+👉 在浏览器中执行一次签到 → 抓取请求 → 青龙重放
 
-WPS_PASSWORD=密码1
-密码2
-
-WPS_COOKIE=xxx
-
-WPS_TOKEN=xxx
-
-WPS_WEBHOOK=https://xxx
-```
-
-说明：
-- 支持多账号（换行分隔）
-- 脚本会自动一一对应处理
+开源项目也是通过这种方式实现的 citeturn299135search0
 
 ---
 
-## 📜 可执行脚本
+## 🧠 一次性配置（非常关键）
 
-### 1️⃣ 青龙任务脚本
+### ① 打开签到页面
 
-```
-qinglong_wps_signin.py
-```
+- 手机 WPS App 或 WPS 社区
+- 执行一次签到
 
-特点：
-- 自动读取环境变量
-- 支持多账号
-- 支持 webhook 推送
-- 已封装日志输出
+👉 官方说明：WPS 支持在 App / 社区进行签到领取空间 citeturn512241search5
 
 ---
 
-## 🧠 如何运行
+### ② 抓取请求
 
-青龙中创建任务：
+1. 打开浏览器 → 登录 WPS
+2. 按 F12 → Network
+3. 点击签到按钮
+4. 找到类似 `check` / `sign` 的请求
+5. 右键 → Copy as cURL
+
+👉 推荐方式（通用方案） citeturn512241search6
+
+---
+
+## ⚙️ 青龙环境变量
+
+### 单账号
+
+```
+WPS_ACCOUNT_NAME=主号
+WPS_CHECKIN_CURL=curl 'https://xxx' -H 'cookie: xxx' ...
+```
+
+---
+
+### 多账号
+
+```
+WPS_ACCOUNT_NAME=号1
+号2
+
+WPS_CHECKIN_CURL=curl ...
+curl ...
+```
+
+或（推荐）：
+
+```
+WPS_CHECKIN_CURL_B64=base64后的curl
+```
+
+---
+
+## ▶️ 运行
 
 ```
 python3 scripts/wps_automation/qinglong_wps_signin.py
 ```
 
-然后设置定时，例如：
+---
 
-```
-0 9 * * *
-```
+## 📊 脚本能力
+
+- ✅ 自动解析 curl
+- ✅ 支持多账号
+- ✅ 自动判断成功/重复签到
+- ✅ 支持 webhook 推送
+- ✅ 支持 dry_run 调试
 
 ---
 
-## 🔧 下一步（我可以继续帮你）
+## ⚠️ 注意
 
-你现在只差一步👇
+1. Cookie 过期需要重新抓
+2. WPS 接口会变化（本方案天然兼容）
+3. 不建议写死接口
 
-👉 把具体 WPS 自动化逻辑填进去
+---
 
-我可以帮你：
+## 🚀 下一步升级
 
-- ✅ 对接真实 WPS 签到接口
-- ✅ 改造成 HTTP API 调用
-- ✅ 接入通知（TG / 企业微信 / 钉钉）
-- ✅ 做成“自动化任务平台”
+我可以帮你继续做：
 
-只要你说一句：
-👉 “我要做 WPS 自动签到” 或 “我要自动处理 Excel”
+- 自动抽奖
+- 自动领云空间
+- 自动刷新 cookie
+- 多平台签到系统
 
-我可以把这个脚本直接补成**能跑业务的版本**。
+👉 直接说：
+
+> 做一个「WPS 全自动签到 + 抽奖系统」
+
+我可以帮你升级成完整自动化项目
