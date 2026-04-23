@@ -2,34 +2,41 @@
 # -*- coding: utf-8 -*-
 
 """
-青龙可运行的 WPS 自动化脚本模板
+青龙可运行的 WPS 自动签到脚本（基于抓到的有效请求重放）
 
-用途：
-- 作为青龙拉库后的可执行 Python 脚本模板
-- 通过环境变量读取账号、密码、Token、Cookie、Webhook 等信息
-- 预留 WPS / 金山文档签到或 API 调用逻辑
+设计思路：
+1. 不硬编码可能变化的旧接口
+2. 使用浏览器/抓包工具里“已经成功签到过”的 curl 请求
+3. 青龙每天重放该请求，实现自动签到
 
-青龙变量示例：
-- WPS_USERNAME
-- WPS_PASSWORD
-- WPS_COOKIE
-- WPS_TOKEN
-- WPS_WEBHOOK
+推荐环境变量：
+- WPS_ACCOUNT_NAME        多账号名称，按行分隔，可选
+- WPS_CHECKIN_CURL        多账号签到 curl，按行分隔（推荐）
+- WPS_CHECKIN_CURL_B64    多账号签到 curl 的 base64 版本，按行分隔（更稳，推荐长命令时使用）
+- WPS_WEBHOOK             通知地址，可选
+- WPS_DRY_RUN             1/true 时仅解析不发送请求
+
+可选：
+- WPS_PAGEINFO_CURL       若你抓到了 page_info 请求，可补充用于检查奖励/次数
+- WPS_LOTTERY_CURL        若你抓到了抽奖请求，可后续自行扩展
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import os
+import re
+import shlex
 import sys
 import time
-from typing import Dict, List
-from urllib import request, parse
-from urllib.error import URLError, HTTPError
+from typing import Dict, List, Optional, Tuple
+from urllib import request
+from urllib.error import HTTPError, URLError
 
-
-SCRIPT_NAME = "WPS青龙任务模板"
-SCRIPT_VERSION = "1.0.0"
+SCRIPT_NAME = "WPS青龙自动签到"
+SCRIPT_VERSION = "2.0.0"
+DEFAULT_TIMEOUT = 20
 
 
 def log(msg: str) -> None:
@@ -38,50 +45,155 @@ def log(msg: str) -> None:
 
 
 def get_env(name: str, default: str = "") -> str:
-    value = os.getenv(name, default).strip()
-    return value
+    return os.getenv(name, default).strip()
 
 
-def mask(value: str) -> str:
-    if not value:
-        return "<empty>"
-    if len(value) <= 6:
-        return "*" * len(value)
-    return value[:3] + "***" + value[-3:]
-
-
-def split_multi_line(value: str) -> List[str]:
+def split_lines(value: str) -> List[str]:
     if not value:
         return []
     return [item.strip() for item in value.splitlines() if item.strip()]
 
 
-def load_accounts() -> List[Dict[str, str]]:
-    usernames = split_multi_line(get_env("WPS_USERNAME"))
-    passwords = split_multi_line(get_env("WPS_PASSWORD"))
-    cookies = split_multi_line(get_env("WPS_COOKIE"))
-    tokens = split_multi_line(get_env("WPS_TOKEN"))
+def mask(value: str, keep: int = 4) -> str:
+    if not value:
+        return "<empty>"
+    if len(value) <= keep * 2:
+        return "*" * len(value)
+    return value[:keep] + "***" + value[-keep:]
 
-    max_len = max(len(usernames), len(passwords), len(cookies), len(tokens), 1)
-    accounts: List[Dict[str, str]] = []
-    for idx in range(max_len):
-        accounts.append(
-            {
-                "username": usernames[idx] if idx < len(usernames) else "",
-                "password": passwords[idx] if idx < len(passwords) else "",
-                "cookie": cookies[idx] if idx < len(cookies) else "",
-                "token": tokens[idx] if idx < len(tokens) else "",
-            }
-        )
-    return [acc for acc in accounts if any(acc.values())]
+
+def to_bool(value: str) -> bool:
+    return value.lower() in {"1", "true", "yes", "on", "y"}
+
+
+def decode_b64_lines(lines: List[str]) -> List[str]:
+    result: List[str] = []
+    for line in lines:
+        try:
+            result.append(base64.b64decode(line).decode("utf-8"))
+        except Exception as exc:
+            raise ValueError(f"Base64 解码失败: {exc}") from exc
+    return result
+
+
+def normalize_curl(curl_cmd: str) -> str:
+    curl_cmd = curl_cmd.strip()
+    curl_cmd = curl_cmd.replace("\\\n", " ").replace("\r", " ").replace("\n", " ")
+    curl_cmd = re.sub(r"\s+", " ", curl_cmd).strip()
+    return curl_cmd
+
+
+def parse_curl(curl_cmd: str) -> Dict[str, object]:
+    cmd = normalize_curl(curl_cmd)
+    if not cmd.startswith("curl ") and not cmd.startswith("curl.exe "):
+        raise ValueError("提供的内容不是 curl 命令")
+
+    parts = shlex.split(cmd, posix=True)
+    method = "GET"
+    url = ""
+    headers: Dict[str, str] = {}
+    body = b""
+
+    i = 1
+    while i < len(parts):
+        part = parts[i]
+        if part in {"-X", "--request"} and i + 1 < len(parts):
+            method = parts[i + 1].upper()
+            i += 2
+            continue
+        if part in {"-H", "--header"} and i + 1 < len(parts):
+            header_line = parts[i + 1]
+            if ":" in header_line:
+                k, v = header_line.split(":", 1)
+                headers[k.strip()] = v.strip()
+            i += 2
+            continue
+        if part in {"--data", "--data-raw", "--data-binary", "--data-ascii", "-d"} and i + 1 < len(parts):
+            body = parts[i + 1].encode("utf-8")
+            if method == "GET":
+                method = "POST"
+            i += 2
+            continue
+        if not part.startswith("-") and not url:
+            url = part
+            i += 1
+            continue
+        i += 1
+
+    if not url:
+        raise ValueError("curl 中未解析到 URL")
+
+    return {
+        "method": method,
+        "url": url,
+        "headers": headers,
+        "body": body,
+    }
+
+
+def send_http(req_conf: Dict[str, object], dry_run: bool = False) -> Tuple[int, str, Dict[str, str]]:
+    method = str(req_conf["method"])
+    url = str(req_conf["url"])
+    headers = dict(req_conf.get("headers", {}))
+    body = req_conf.get("body", b"")
+    if isinstance(body, str):
+        body = body.encode("utf-8")
+
+    log(f"请求: {method} {url}")
+    if "Cookie" in headers:
+        log(f"Cookie: {mask(headers['Cookie'])}")
+    elif "cookie" in headers:
+        log(f"cookie: {mask(headers['cookie'])}")
+
+    if dry_run:
+        return 200, json.dumps({"dry_run": True, "url": url}, ensure_ascii=False), {}
+
+    req = request.Request(url=url, data=body if method != "GET" else None, method=method)
+    for k, v in headers.items():
+        req.add_header(k, v)
+
+    with request.urlopen(req, timeout=DEFAULT_TIMEOUT) as resp:
+        raw = resp.read().decode("utf-8", errors="ignore")
+        resp_headers = {k: v for k, v in resp.headers.items()}
+        return resp.status, raw, resp_headers
+
+
+def looks_like_success(status: int, text: str) -> Tuple[bool, str]:
+    text_lower = text.lower()
+    if status != 200:
+        return False, f"HTTP {status}"
+    success_keywords = [
+        '"result":"ok"',
+        '"success":true',
+        '"code":0',
+        '"msg":"ok"',
+        '签到成功',
+        '已签到',
+        'success',
+    ]
+    repeated_keywords = [
+        '已经签到',
+        '重复签到',
+        'already',
+        '已领取',
+    ]
+    if any(k in text_lower for k in [s.lower() for s in success_keywords]):
+        return True, "接口返回成功"
+    if any(k in text_lower for k in [s.lower() for s in repeated_keywords]):
+        return True, "今天可能已经签过"
+    return True, "请求成功，但未命中特定成功关键字，请检查返回内容"
+
+
+def brief_text(text: str, limit: int = 220) -> str:
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:limit] + ("..." if len(text) > limit else "")
 
 
 def send_webhook(text: str) -> None:
     webhook = get_env("WPS_WEBHOOK")
     if not webhook:
         return
-
-    payload = json.dumps({"text": text}).encode("utf-8")
+    payload = json.dumps({"text": text}, ensure_ascii=False).encode("utf-8")
     req = request.Request(
         webhook,
         data=payload,
@@ -90,64 +202,78 @@ def send_webhook(text: str) -> None:
     )
     try:
         with request.urlopen(req, timeout=15) as resp:
-            log(f"Webhook 推送完成，状态码: {resp.status}")
+            log(f"Webhook 已发送，状态码: {resp.status}")
     except Exception as exc:
-        log(f"Webhook 推送失败: {exc}")
+        log(f"Webhook 发送失败: {exc}")
 
 
-def run_account(account: Dict[str, str], index: int) -> Dict[str, str]:
-    username = account.get("username", "")
-    cookie = account.get("cookie", "")
-    token = account.get("token", "")
+def load_accounts() -> List[Dict[str, str]]:
+    names = split_lines(get_env("WPS_ACCOUNT_NAME"))
+    curls = split_lines(get_env("WPS_CHECKIN_CURL"))
+    curls_b64 = split_lines(get_env("WPS_CHECKIN_CURL_B64"))
 
-    log(f"开始处理第 {index} 个账号")
-    log(f"用户名: {username or '<未提供>'}")
-    if cookie:
-        log(f"Cookie: {mask(cookie)}")
-    if token:
-        log(f"Token: {mask(token)}")
+    if curls_b64:
+        curls.extend(decode_b64_lines(curls_b64))
 
-    # TODO:
-    # 1. 如果你后续确定了 WPS 具体接口，可在这里发送 HTTP 请求
-    # 2. 如果是 AirScript / 金山文档接口，也可以改成调用对应 API
-    # 3. 如果需要签到逻辑，可在这里解析返回值并判断成功/失败
+    accounts: List[Dict[str, str]] = []
+    for idx, curl_cmd in enumerate(curls, start=1):
+        name = names[idx - 1] if idx - 1 < len(names) else f"WPS账号{idx}"
+        accounts.append({"name": name, "curl": curl_cmd})
+    return accounts
 
-    # 当前先返回“模板成功执行”，用于验证青龙拉库与环境变量配置没问题
+
+def run_account(account: Dict[str, str], index: int, dry_run: bool) -> Dict[str, str]:
+    name = account["name"]
+    curl_cmd = account["curl"]
+    log(f"开始处理账号 {index}: {name}")
+
+    parsed = parse_curl(curl_cmd)
+    status, text, _ = send_http(parsed, dry_run=dry_run)
+    ok, reason = looks_like_success(status, text)
+
     return {
-        "username": username or f"account_{index}",
-        "status": "success",
-        "message": "模板执行成功，请在 run_account() 中补充实际 WPS 逻辑",
+        "account": name,
+        "status": "success" if ok else "failed",
+        "reason": reason,
+        "http_status": str(status),
+        "response": brief_text(text),
     }
 
 
 def main() -> int:
     log(f"启动 {SCRIPT_NAME} v{SCRIPT_VERSION}")
+    dry_run = to_bool(get_env("WPS_DRY_RUN", "0"))
     accounts = load_accounts()
+
     if not accounts:
-        log("未找到任何账号配置，请设置 WPS_USERNAME / WPS_PASSWORD / WPS_COOKIE / WPS_TOKEN")
+        log("未找到账号。请设置 WPS_CHECKIN_CURL 或 WPS_CHECKIN_CURL_B64。")
         return 1
 
     results: List[Dict[str, str]] = []
-    for i, account in enumerate(accounts, start=1):
+    for idx, account in enumerate(accounts, start=1):
         try:
-            result = run_account(account, i)
+            result = run_account(account, idx, dry_run=dry_run)
         except (HTTPError, URLError) as exc:
             result = {
-                "username": account.get("username") or f"account_{i}",
+                "account": account.get("name", f"WPS账号{idx}"),
                 "status": "failed",
-                "message": f"网络请求失败: {exc}",
+                "reason": f"网络错误: {exc}",
+                "http_status": "-",
+                "response": "",
             }
         except Exception as exc:
             result = {
-                "username": account.get("username") or f"account_{i}",
+                "account": account.get("name", f"WPS账号{idx}"),
                 "status": "failed",
-                "message": f"运行异常: {exc}",
+                "reason": f"运行异常: {exc}",
+                "http_status": "-",
+                "response": "",
             }
         results.append(result)
-        log(f"结果: {result['username']} -> {result['status']} | {result['message']}")
+        log(f"{result['account']} -> {result['status']} | {result['reason']}")
 
     success_count = sum(1 for item in results if item["status"] == "success")
-    summary = f"{SCRIPT_NAME} 执行完成，成功 {success_count}/{len(results)}"
+    summary = f"{SCRIPT_NAME} 执行完成：成功 {success_count}/{len(results)}"
     log(summary)
     send_webhook(summary + "\n" + json.dumps(results, ensure_ascii=False, indent=2))
     return 0 if success_count == len(results) else 2
